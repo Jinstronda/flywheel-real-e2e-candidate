@@ -108,6 +108,7 @@ def main():
         {"role": "user", "content": f"Task:\n{INSTRUCTION}{hint}\n\nBegin. Output your first json tool call."},
     ]
     apps_seen = set()
+    completed = False
     for _ in range(MAX_STEPS):
         try:
             content = chat(messages)
@@ -124,7 +125,11 @@ def main():
         messages.append({"role": "assistant", "content": json.dumps(action)})
         messages.append({"role": "user", "content": f"Result:\n{json.dumps(result, default=str)[:1500]}\n\nNext json tool call, or complete_task if done."})
         if action.get("tool") == "complete_task":
+            completed = True
             break
+
+    if not completed:
+        call_tool("complete_task", {"answer": "null"})
 
     if apps_seen:
         merged = sorted(set(known) | apps_seen)
