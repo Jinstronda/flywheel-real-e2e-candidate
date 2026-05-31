@@ -24,12 +24,12 @@ SYSTEM = (
     '  {"tool":"search_apis","query":"..."}                      discover APIs by keyword\n'
     '  {"tool":"api_doc","app":"...","api":"..."}                read one API\'s params\n'
     '  {"tool":"call_api","app":"...","api":"...","arguments":{}} call apis.<app>.<api>(**arguments)\n'
-    '  {"tool":"complete_task","answer":"..."}                   finish (omit answer if none asked)\n'
+    '  {"tool":"complete_task","answer":"..."}                   finish ("null" for action tasks)\n'
     "Login flow: call_api supervisor.show_account_passwords (list of {account_name,password}),\n"
     "call_api supervisor.show_profile (has email, phone_number), then call_api <app>.login with\n"
     "username+password to get access_token; pass access_token in later call_api arguments.\n"
     "Inspect each result before indexing it. Page list APIs with page_index=0,1,2,... Keep the\n"
-    "final answer concise (a number, name, or comma-separated list). Output ONLY the json object."
+    "final answer concise (a number, name, comma-separated list, or null for action tasks). Output ONLY the json object."
 )
 
 _JSON = re.compile(r"\{.*\}", re.DOTALL)
@@ -89,7 +89,10 @@ def dispatch(action):
         return call_tool("call_api", {"app": action.get("app", ""), "api": action.get("api", ""),
                                       "arguments": action.get("arguments") or {}})
     if tool == "complete_task":
-        return call_tool("complete_task", {"answer": action.get("answer")} if "answer" in action else {})
+        answer = action.get("answer", "null")
+        if answer in (None, "", "<<not_given>>"):
+            answer = "null"
+        return call_tool("complete_task", {"answer": answer})
     return {"error": f"unknown tool {tool}"}
 
 
