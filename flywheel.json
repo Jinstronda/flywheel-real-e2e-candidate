@@ -1,0 +1,4 @@
+{
+  "entrypoint": "python main.py",
+  "language": "python"
+}
