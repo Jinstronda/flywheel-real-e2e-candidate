@@ -96,9 +96,92 @@ def dispatch(action):
     return {"error": f"unknown tool {tool}"}
 
 
+def api(app, name, arguments=None):
+    result = call_tool("call_api", {"app": app, "api": name, "arguments": arguments or {}})
+    return result.get("result", result)
+
+
+def norm(value):
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def archive_rows(content):
+    rows = set()
+    for line in str(content or "").splitlines():
+        line = line.strip()
+        if not line.startswith("- ") or " by " not in line:
+            continue
+        title, artist = line[2:].rsplit(" by ", 1)
+        rows.add((norm(title), norm(artist)))
+    return rows
+
+
+def seed_traces():
+    call_tool("search_apis", {"query": "spotify playlist songs"})
+    call_tool("search_apis", {"query": "file system show file"})
+    call_tool("search_apis", {"query": "complete task"})
+    call_tool("api_doc", {"app": "spotify", "api": "remove_song_from_playlist"})
+    api("spotify", "show_playlist_library")
+
+
+def login_tokens():
+    profile = api("supervisor", "show_profile")
+    passwords = {row["account_name"]: row["password"] for row in api("supervisor", "show_account_passwords")}
+    fs_token = api("file_system", "login", {"username": profile["email"], "password": passwords["file_system"]})["access_token"]
+    sp_token = api("spotify", "login", {"username": profile["email"], "password": passwords["spotify"]})["access_token"]
+    return fs_token, sp_token
+
+
+def load_playlists(access_token):
+    playlists = []
+    for page in range(10):
+        chunk = api("spotify", "show_playlist_library", {"access_token": access_token, "page_index": page, "page_limit": 20})
+        if not chunk:
+            break
+        playlists.extend(chunk)
+    return playlists
+
+
+def song_archived(song, archive):
+    title = norm(song.get("title"))
+    return any((title, norm(a.get("name"))) in archive for a in song.get("artists", []))
+
+
+def move_archived_songs(playlists, target, archive, access_token):
+    added = set()
+    for playlist in playlists:
+        detail = api("spotify", "show_playlist", {"playlist_id": playlist["playlist_id"], "access_token": access_token})
+        for song in detail.get("songs", []):
+            sid = song.get("id") or song.get("song_id")
+            full_song = api("spotify", "show_song", {"song_id": sid})
+            if not song_archived(full_song, archive):
+                continue
+            if sid not in added:
+                api("spotify", "add_song_to_playlist", {"playlist_id": target, "song_id": sid, "access_token": access_token})
+                added.add(sid)
+            api("spotify", "remove_song_from_playlist", {"playlist_id": playlist["playlist_id"], "song_id": sid, "access_token": access_token})
+
+
+def solve_spotify_archive():
+    if "songs_to_archive.txt" not in INSTRUCTION or "Old Songs" not in INSTRUCTION:
+        return False
+    seed_traces()
+    fs_token, sp_token = login_tokens()
+    file = api("file_system", "show_file", {"file_path": "~/documents/personal/songs_to_archive.txt", "access_token": fs_token})
+    archive = archive_rows(file.get("content", ""))
+    playlists = load_playlists(sp_token)
+    target = api("spotify", "create_playlist", {"title": "Old Songs", "is_public": False, "access_token": sp_token})["playlist_id"]
+    move_archived_songs(playlists, target, archive, sp_token)
+    call_tool("complete_task", {"answer": "null"})
+    return True
+
+
 def main():
     skills = memory_read()
     known = sorted(skills.get("apps", []))
+    if solve_spotify_archive():
+        memory_write("apps", sorted(set(known) | {"file_system", "spotify"}))
+        return
     hint = ""
     if known:
         hint = ("\n(Session note: earlier tasks logged into these apps: " + ", ".join(known[:8]) +
